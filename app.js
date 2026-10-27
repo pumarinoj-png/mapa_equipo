@@ -337,7 +337,7 @@
     }).join('');
     return `<div class="page-head"><div><h1>${esc(state.leader.team || 'Mi equipo')}</h1>
         <p>${READONLY ? `Equipo de ${esc(state.leader.name)}. Estás viendo sus respuestas en modo solo lectura.` : `Hola, ${esc(state.leader.name)}. Agrega a cada persona y ve completando su perfil a tu ritmo. Todo se guarda solo.`}</p></div>
-        ${ppl.length >= 2 ? '<a class="btn" href="#/mapa">Ver mapa del equipo</a>' : ''}</div>
+        <div class="btn-row">${ppl.length ? '<button class="btn ghost" data-action="export-docx">Descargar informe (Word)</button>' : ''}${ppl.length >= 2 ? '<a class="btn" href="#/mapa">Ver mapa del equipo</a>' : ''}</div></div>
       ${READONLY ? '' : `<form class="panel" id="add-form">
         <h2>Agregar persona</h2>
         <div class="inline-form">
@@ -542,6 +542,7 @@
         <div class="avatar lg ${d ? 'disc-' + d.primary : ''}" aria-hidden="true">${esc(initials(p.name))}</div>
         <div><h1>${esc(p.name)}</h1><p class="muted" style="margin:0">${esc(sub || 'Sin cargo definido')}</p></div>
         <div class="profile-actions btn-row">${READONLY ? '' : `<a class="btn" href="#/editar/${p.id}/${nextStep(p)}">Editar</a>`}
+          <button class="btn ghost" data-action="export-person-docx" data-id="${p.id}">Descargar en Word</button>
           <button class="btn ghost" data-action="print">Imprimir o guardar PDF</button>
           <a class="btn ghost" href="#/equipo">Volver</a></div>
       </div>
@@ -867,8 +868,11 @@
   function viewData() {
     return `<div class="page-head"><div><h1>Respaldo y datos</h1><p>Tu información vive en este navegador. Si cambias de computador, borras el historial o usas otro navegador, no la verás. Descarga un respaldo para llevarla contigo.</p></div></div>
       <section class="panel"><h2>Descargar</h2>
-        <div class="btn-row"><button class="btn" data-action="export-json">Respaldo completo (JSON)</button>
-        <button class="btn ghost" data-action="export-csv">Resumen para Excel (CSV)</button></div></section>
+        <p class="sect-desc">Elige según lo que necesites: para leer o compartir, el informe en Word; para volver a cargar tus datos en otro navegador, el respaldo.</p>
+        <div class="btn-row"><button class="btn" data-action="export-docx">Informe del equipo (Word)</button>
+        <button class="btn ghost" data-action="export-csv">Resumen para Excel (CSV)</button>
+        <button class="btn ghost" data-action="export-json">Respaldo para restaurar (JSON)</button></div>
+        <p class="small muted" style="margin-top:.8rem">El respaldo JSON no está pensado para leerse: es el formato que la app usa para restaurar tus datos. Sirve solo con la opción "Restaurar un respaldo".</p></section>
       <section class="panel"><h2>Restaurar un respaldo</h2>
         <p class="muted">Esto reemplaza los datos que tengas ahora en este navegador.</p>
         <input type="file" id="import-file" accept="application/json,.json" aria-label="Archivo de respaldo"></section>
@@ -913,6 +917,152 @@
   }
 
   /* =====================================================================
+     Informe en Word (.docx), generado en el navegador sin librerías externas
+     ===================================================================== */
+  const xmlEsc = s => String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const wRun = (t, o = {}) => `<w:r><w:rPr>${o.b ? '<w:b/>' : ''}${o.i ? '<w:i/>' : ''}${o.color ? `<w:color w:val="${o.color}"/>` : ''}${o.size ? `<w:sz w:val="${o.size}"/>` : ''}</w:rPr><w:t xml:space="preserve">${xmlEsc(t)}</w:t></w:r>`;
+  const wPara = (inner, o = {}) => `<w:p><w:pPr>${o.style ? `<w:pStyle w:val="${o.style}"/>` : ''}${o.keepNext ? '<w:keepNext/>' : ''}${o.after != null ? `<w:spacing w:after="${o.after}"/>` : ''}${o.ind ? `<w:ind w:left="${o.ind}" w:hanging="${o.hang || 0}"/>` : ''}</w:pPr>${inner}</w:p>`;
+  const wH = (t, lvl) => wPara(wRun(t), { style: 'Heading' + lvl, keepNext: true });
+  const wKv = (label, value) => {
+    const has = value != null && String(value).trim() !== '';
+    return wPara(wRun(label + ': ', { b: true }) + wRun(has ? value : 'Sin responder', has ? {} : { color: '888888', i: true }), { after: 80 });
+  };
+  const wBullet = t => wPara(wRun('•  ') + wRun(t), { ind: 360, hang: 220, after: 40 });
+  const wBreak = () => '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+  const wTable = (rows, widths) => `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="${widths.reduce((a, b) => a + b, 0)}" w:type="dxa"/></w:tblPr><w:tblGrid>${widths.map(w => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>${
+    rows.map((r, ri) => `<w:tr>${r.map((c, ci) => `<w:tc><w:tcPr><w:tcW w:w="${widths[ci]}" w:type="dxa"/>${ri === 0 ? '<w:shd w:val="clear" w:color="auto" w:fill="EBE5DA"/>' : ''}</w:tcPr>${wPara(wRun(c, ri === 0 ? { b: true } : {}), { after: 0 })}</w:tc>`).join('')}</w:tr>`).join('')
+  }</w:tbl>${wPara('', { after: 120 })}`;
+
+  const DOCX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="es-CL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="264" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="160"/></w:pPr><w:rPr><w:b/><w:color w:val="2B1B14"/><w:sz w:val="48"/><w:szCs w:val="48"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:color w:val="2B1B14"/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="80"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:color w:val="7A4A2E"/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style>
+<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
+<w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="BBBBBB"/><w:left w:val="single" w:sz="4" w:space="0" w:color="BBBBBB"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="BBBBBB"/><w:right w:val="single" w:sz="4" w:space="0" w:color="BBBBBB"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="BBBBBB"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="BBBBBB"/></w:tblBorders></w:tblPr></w:style>
+</w:styles>`;
+
+  const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = u8 => { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+
+  // Un .docx es un zip de archivos XML. Este zip mínimo guarda sin comprimir, lo que Word acepta sin problema.
+  function makeZip(files, mime) {
+    const enc = new TextEncoder(); const chunks = []; const central = []; let offset = 0;
+    const d = new Date();
+    const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    files.forEach(f => {
+      const name = enc.encode(f.name); const data = enc.encode(f.text); const crc = crc32(data);
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+      lh.setUint16(10, time, true); lh.setUint16(12, date, true); lh.setUint32(14, crc, true);
+      lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+      chunks.push(new Uint8Array(lh.buffer), name, data);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+      ch.setUint16(12, time, true); ch.setUint16(14, date, true); ch.setUint32(16, crc, true);
+      ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+      central.push(new Uint8Array(ch.buffer), name);
+      offset += 30 + name.length + data.length;
+    });
+    const cdSize = central.reduce((n, c) => n + c.length, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+    end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+    return new Blob([...chunks, ...central, new Uint8Array(end.buffer)], { type: mime });
+  }
+
+  const NOW = { threat: 'Amenaza', neutral: 'Neutro', reward: 'Recompensa' };
+
+  function personXml(p) {
+    const out = [];
+    const d = discOf(p);
+    const list = a => (a.length ? a.join(', ') : '');
+    out.push(wH(`${p.name}${p.role ? ', ' + p.role : ''}`, 1));
+    if (p.tenure) out.push(wKv('Tiempo trabajando con el líder', p.tenure));
+    out.push(wKv('Estilo DISC', d ? `${d.label}, ${DISC[d.primary].name}${d.complete ? '' : ' (resultado parcial)'}. Puntajes: ${DISC_LETTERS.filter(L => d.scores[L] != null).map(L => `${L} ${d.scores[L].toFixed(1)}`).join(', ')}` : ''));
+    if (d) out.push(wKv('Cómo liderarla', DISC[d.primary].tip));
+    out.push(wH('SCARF', 2));
+    out.push(wTable([['Necesidad', 'Importancia (1 a 5)', 'Hoy lo vive como'], ...SCARF.map(x => [x.name, p.scarf[x.k].s ?? 'Sin responder', NOW[p.scarf[x.k].now] || 'Sin responder'])], [3600, 3186, 3186]));
+    SCARF.filter(x => p.scarf[x.k].note.trim()).forEach(x => out.push(wKv(`Observación sobre ${x.name.toLowerCase()}`, p.scarf[x.k].note.trim())));
+    out.push(wH('Fortalezas y desarrollo', 2));
+    out.push(wKv('Fortalezas', list(p.strengths))); if (p.strengthNote.trim()) out.push(wKv('Situación en la que brilló', p.strengthNote.trim()));
+    out.push(wKv('Áreas de desarrollo', list(p.devs))); if (p.devNote.trim()) out.push(wKv('Cuándo se traba o necesita apoyo', p.devNote.trim()));
+    out.push(wH('Tareas y forma de trabajar', 2));
+    out.push(wKv('Rinde mejor en', list(p.bestTasks))); if (p.bestNote.trim()) out.push(wKv('Qué hace mejor que nadie', p.bestNote.trim()));
+    if (p.drainNote.trim()) out.push(wKv('Tareas que le desgastan', p.drainNote.trim()));
+    out.push(wKv('Estructura', prefText(p.prefs.structure, 'Prefiere crear y la ambigüedad', 'Prefiere procesos definidos').replace('Sin responder', '')));
+    out.push(wKv('Interacción', prefText(p.prefs.social, 'Trabaja mejor sola', 'Trabaja mejor en equipo').replace('Sin responder', '')));
+    out.push(wKv('Horizonte', prefText(p.prefs.horizon, 'Corto plazo y ejecución', 'Largo plazo y estrategia').replace('Sin responder', '')));
+    out.push(wH('Desempeño y gestión', 2));
+    out.push(wKv('Habilidad en su rol', p.skill ? `${p.skill} de 5` : ''));
+    out.push(wKv('Motivación hoy', p.will ? `${p.will} de 5` : ''));
+    out.push(wKv('Potencial', p.potential));
+    out.push(wKv('Riesgo de fuga', p.retention ? p.retention[0].toUpperCase() + p.retention.slice(1) : ''));
+    out.push(wKv('Qué la motiva', list(p.motivators)));
+    out.push(wKv('Feedback preferido', p.feedback));
+    out.push(wKv('Qué hará el líder en los próximos 30 días', p.action.trim()));
+    const cv = state.customVars.filter(v => p.custom[v.id] && (p.custom[v.id].score != null || p.custom[v.id].summary));
+    if (cv.length) {
+      out.push(wH('Variables propias', 2));
+      cv.forEach(v => {
+        const c = p.custom[v.id];
+        out.push(wKv(v.name, `${c.score != null ? c.score + ' de 5. ' : ''}${c.summary || ''}`.trim()));
+        if (c.tip) out.push(wKv('Recomendación', c.tip));
+        (c.chat || []).forEach(m => out.push(wPara(wRun(m.role === 'assistant' ? 'Pregunta: ' : 'Respuesta del líder: ', { b: true, size: 20 }) + wRun(m.text, { size: 20, i: m.role === 'assistant' }), { ind: 360, after: 40 })));
+      });
+    }
+    return out.join('');
+  }
+
+  function reportBody(people, team) {
+    const out = [];
+    const l = state.leader;
+    out.push(wPara(wRun(team ? 'Informe del equipo' : people[0].name), { style: 'Title' }));
+    out.push(wKv('Empresa y equipo', [l.company, l.team].filter(Boolean).join(', ')));
+    out.push(wKv('Líder', l.name));
+    out.push(wKv('Fecha', new Date().toLocaleDateString('es-CL')));
+    if (team) {
+      const ppl = state.people;
+      out.push(wKv('Personas mapeadas', String(ppl.length)));
+      out.push(wKv('Avance promedio de los perfiles', `${pct(avg(ppl.map(progress)))}%`));
+      const ins = insights();
+      if (ins.length) { out.push(wH('Lo que más llama la atención', 1)); ins.forEach(i => out.push(wBullet(i.x))); }
+      out.push(wH('Estilos DISC del equipo', 1));
+      DISC_LETTERS.forEach(L => out.push(wKv(`${L} ${DISC[L].name}`, ppl.filter(p => { const d = discOf(p); return d && d.primary === L; }).map(p => p.name).join(', ') || 'Nadie')));
+      [['Fortalezas más frecuentes', 'strengths'], ['Áreas de desarrollo más frecuentes', 'devs']].forEach(([title, key]) => {
+        const m = new Map(); ppl.forEach(p => p[key].forEach(x => m.set(x, [...(m.get(x) || []), p.name])));
+        const rows = [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+        if (rows.length) { out.push(wH(title, 1)); rows.forEach(([n, who]) => out.push(wBullet(`${n} (${who.length}): ${who.join(', ')}`))); }
+      });
+    }
+    people.forEach((p, i) => { if (team || i > 0) out.push(wBreak()); out.push(personXml(p)); });
+    out.push(wPara(wRun('Este informe refleja la percepción del líder. No es un test psicométrico validado ni debe usarse para evaluar formalmente, contratar, sancionar o despedir.', { i: true, size: 18, color: '666666' }), { after: 0 }));
+    return out.join('');
+  }
+
+  function downloadReport(personId) {
+    const people = personId ? [person(personId)].filter(Boolean) : state.people;
+    if (!people.length) { toast('Todavía no hay personas para el informe.'); return; }
+    const NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const files = [
+      { name: '[Content_Types].xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>` },
+      { name: '_rels/.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>` },
+      { name: 'word/_rels/document.xml.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+      { name: 'word/styles.xml', text: DOCX_STYLES },
+      { name: 'word/document.xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="${NS}"><w:body>${reportBody(people, !personId)}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr></w:body></w:document>` }
+    ];
+    const blob = makeZip(files, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    const slug = people[0].name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'persona';
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = personId ? `perfil-${slug}-${stamp()}.docx` : `informe-equipo-${stamp()}.docx`;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    toast('Informe descargado.');
+  }
+
+  /* =====================================================================
      Servicios en la nube: llamadas a la API, registro con administración y asesor IA
      ===================================================================== */
   const getCode = () => { try { return localStorage.getItem(CODE_KEY) || ''; } catch (e) { return ''; } };
@@ -928,7 +1078,8 @@
 
   async function apiPost(url, payload, opts = {}, retried = false) {
     let res;
-    try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Access-Code': getCode() }, body: JSON.stringify(payload) }); }
+    const reqBody = JSON.stringify(payload);
+    try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Access-Code': getCode() }, body: reqBody, keepalive: !!opts.keepalive && reqBody.length < 60000 }); }
     catch (e) { throw new Error('No se pudo conectar con el servidor. Revisa tu conexión e intenta de nuevo.'); }
     let data = null; try { data = await res.json(); } catch (e) { /* ignorar */ }
     if (res.status === 401 && opts.interactive && !retried) {
@@ -951,9 +1102,18 @@
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); return true; }
     catch (e) { toast('No se pudo guardar en este navegador. Descarga un respaldo en la sección Respaldo.'); return false; }
   }
+  // Tras un envío solo se actualiza la marca de tiempo, sin reescribir el resto: así una pestaña con datos
+  // desactualizados no pisa los cambios hechos en otra, ni "revive" datos borrados al salir.
+  function persistSyncMeta() {
+    if (READONLY) return;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY); if (!raw) return;
+      const cur = JSON.parse(raw); cur.sync = state.sync; localStorage.setItem(STORAGE_KEY, JSON.stringify(cur));
+    } catch (e) { /* ignorar */ }
+  }
   function scheduleSync(delay = 8000) {
     if (!syncActive()) return;
-    clearTimeout(syncTimer); syncTimer = setTimeout(() => doSync(false), delay);
+    clearTimeout(syncTimer); syncTimer = setTimeout(() => { syncTimer = null; doSync(false); }, delay);
   }
 
   function buildActivity() {
@@ -974,19 +1134,19 @@
     };
   }
 
-  async function doSync(manual) {
+  async function doSync(manual, keepalive) {
     if (READONLY || !state.leader || !syncCfg.enabled) return false;
     if (!manual && !syncActive()) return false;
     const { sync, ...snap } = state;
     const payload = { leader: { id: state.leader.id, name: state.leader.name, email: state.leader.email || '', company: state.leader.company || '', team: state.leader.team || '' }, activity: buildActivity() };
     if (syncCfg.level === 'full') payload.snapshot = snap;
     try {
-      await apiPost('/api/sync', payload, { interactive: !!manual });
-      state.sync.last = Date.now(); state.sync.error = ''; persist(); updateSyncUi();
+      await apiPost('/api/sync', payload, { interactive: !!manual, keepalive: !!keepalive });
+      state.sync.last = Date.now(); state.sync.error = ''; persistSyncMeta(); updateSyncUi();
       if (manual) toast('Copia enviada a administración.');
       return true;
     } catch (e) {
-      state.sync.error = e.message; persist(); updateSyncUi();
+      state.sync.error = e.message; persistSyncMeta(); updateSyncUi();
       if (manual) toast(e.message);
       return false;
     }
@@ -1297,6 +1457,8 @@
     if (a === 'print') window.print();
     else if (a.startsWith('ai-') || a === 'var-delete' || a === 'var-suggest') handleVarAction(act, a);
     else if (a === 'sys-png') downloadSystemPng();
+    else if (a === 'export-docx') downloadReport();
+    else if (a === 'export-person-docx') downloadReport(act.dataset.id);
     else if (a === 'exit') exitAndWipe();
     else if (a === 'adv-prompt') { const ta = $('#adv-input'); if (ta) { ta.value = act.dataset.val; ta.focus(); } }
     else if (a === 'adv-send') {
@@ -1427,7 +1589,7 @@
     if (opt) {
       if (opt === 'adv.names') state.advisor.names = e.target.checked;
       else if (opt === 'adv.notes') state.advisor.notes = e.target.checked;
-      else if (opt === 'sync.optIn') { state.sync.optIn = e.target.checked; if (e.target.checked) scheduleSync(500); }
+      else if (opt === 'sync.optIn') { state.sync.optIn = e.target.checked; if (e.target.checked) { if (syncCfg.needsCode && !getCode()) doSync(true); else scheduleSync(500); } }
       save(); return;
     }
     if (e.target.id !== 'import-file' || !e.target.files[0]) return;
@@ -1449,6 +1611,10 @@
   });
 
   window.addEventListener('hashchange', render);
+  // Si el líder cambia de pestaña o cierra la app con cambios pendientes, se envían de inmediato.
+  const flushSync = () => { if (syncTimer && syncActive()) { clearTimeout(syncTimer); syncTimer = null; doSync(false, true); } };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSync(); });
+  window.addEventListener('pagehide', flushSync);
   if (READONLY) bootAdminView();
   else { render(); loadSyncCfg(); }
 })();
